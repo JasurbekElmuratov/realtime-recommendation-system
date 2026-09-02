@@ -15,7 +15,7 @@ from content_classifier import (
     LinearContentClassifier,
     build_classifier_inputs,
 )
-from relevance import MODEL_NAME, load_model
+from embedding_model import MODEL_NAME, load_embedding_model
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -158,7 +158,7 @@ def main(argv: list[str] | None = None) -> None:
     validate_training_data(frame)
     frame["dataset_split"] = grouped_split_labels(frame)
 
-    model = load_model()
+    model = load_embedding_model()
     embeddings = model.encode(
         frame["content"].astype(str).tolist(),
         batch_size=64,

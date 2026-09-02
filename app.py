@@ -9,14 +9,12 @@ import secrets
 import numpy as np
 import pandas as pd
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
 from sentence_transformers import SentenceTransformer
 import streamlit as st
 
-from cleaning import enrich_post_books, make_payload
+from embedding_model import load_embedding_model
 from generate_recommendations import (
     COLLECTION_NAME,
-    MODEL_NAME,
     recommend_for_profile,
 )
 from personalization import (
@@ -34,8 +32,6 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 BOOKS_FILE = DATA_DIR / "books.csv"
 POSTS_FILE = DATA_DIR / "posts.csv"
-PROCESSED_POSTS_FILE = DATA_DIR / "posts_processed.csv"
-POST_EMBEDDINGS_FILE = DATA_DIR / "post_embeddings.npy"
 BOOK_EVENTS_FILE = DATA_DIR / "user_book_events.csv"
 POST_EVENTS_FILE = DATA_DIR / "interaction_events.csv"
 FEED_SIZE = 5
@@ -101,45 +97,12 @@ def load_popular_books() -> pd.DataFrame:
 
 @st.cache_resource
 def load_model() -> SentenceTransformer:
-    return SentenceTransformer(MODEL_NAME, local_files_only=True)
+    return load_embedding_model()
 
 
 @st.cache_resource
 def load_client(url: str, api_key: str) -> QdrantClient:
     return QdrantClient(url=url, api_key=api_key)
-
-
-@st.cache_resource(show_spinner=False)
-def load_local_client() -> QdrantClient:
-    """Build a cached in-memory Qdrant index from local processed artifacts."""
-
-    source_posts = pd.read_csv(PROCESSED_POSTS_FILE)
-    embeddings = np.load(POST_EMBEDDINGS_FILE)
-    indexed_posts = enrich_post_books(source_posts)
-    if len(indexed_posts) != len(embeddings):
-        raise ValueError("Local posts and embeddings are not aligned")
-
-    client = QdrantClient(":memory:")
-    client.create_collection(
-        collection_name=COLLECTION_NAME,
-        vectors_config=VectorParams(
-            size=embeddings.shape[1],
-            distance=Distance.COSINE,
-        ),
-    )
-    batch_size = 200
-    for start in range(0, len(indexed_posts), batch_size):
-        batch = indexed_posts.iloc[start : start + batch_size]
-        points = [
-            PointStruct(
-                id=int(post.post_id),
-                vector=embeddings[start + offset].tolist(),
-                payload=make_payload(post),
-            )
-            for offset, post in enumerate(batch.itertuples(index=False))
-        ]
-        client.upsert(collection_name=COLLECTION_NAME, points=points)
-    return client
 
 
 def configured_value(name: str) -> str | None:
@@ -156,9 +119,11 @@ def configured_value(name: str) -> str | None:
 def active_client() -> QdrantClient:
     url = configured_value("QDRANT_URL")
     api_key = configured_value("QDRANT_API_KEY")
-    if url and api_key:
-        return load_client(url, api_key)
-    return load_local_client()
+    if not url or not api_key:
+        raise RuntimeError(
+            "Qdrant Cloud is not configured. Set QDRANT_URL and QDRANT_API_KEY."
+        )
+    return load_client(url, api_key)
 
 
 def initialize_session() -> None:
@@ -206,8 +171,16 @@ def render_book_selection() -> None:
     st.caption(
         "Select exactly three books in each group from the 30 most popular titles."
     )
-    if not configured_value("QDRANT_URL") or not configured_value("QDRANT_API_KEY"):
-        st.caption("Using the built-in local recommendation index.")
+    cloud_ready = bool(
+        configured_value("QDRANT_URL") and configured_value("QDRANT_API_KEY")
+    )
+    if cloud_ready:
+        st.caption("Connected to the configured Qdrant Cloud collection.")
+    else:
+        st.warning(
+            "Qdrant Cloud is required. Configure QDRANT_URL and "
+            "QDRANT_API_KEY before creating a profile."
+        )
     left, right = st.columns(2, gap="large")
     with left:
         st.markdown("#### I have read")
@@ -235,7 +208,7 @@ def render_book_selection() -> None:
     if st.button(
         "Create my profile and show the top 5 posts",
         type="primary",
-        disabled=not ready,
+        disabled=not ready or not cloud_ready,
         use_container_width=True,
     ):
         try:

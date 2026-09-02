@@ -1,14 +1,26 @@
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 
-from cleaning import MODEL_NAME, classify_posts, enrich_post_books, prepare_posts_dataframe
+from cleaning import (
+    MODEL_NAME,
+    classify_posts,
+    cloud_qdrant_client,
+    enrich_post_books,
+    prepare_posts_dataframe,
+)
 
 
 class CleaningTests(unittest.TestCase):
+    def test_cloud_credentials_are_required_before_processing(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "QDRANT_URL"):
+                cloud_qdrant_client()
+
     def test_trained_classification_fields_are_added(self) -> None:
         class FakeClassifier:
             embedding_model = MODEL_NAME

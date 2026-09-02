@@ -25,27 +25,18 @@ The project uses these CSV files in `data/`:
 - `user_events.csv`: `user_id,book_id,event,timestamp`, where event is `read`,
   `saved`, or `searched`.
 
-Run the processing step to create the generated local files:
+Configure Qdrant Cloud, then run the processing and upload step:
 
 ```bash
 python -m pip install -r requirements.txt
-python cleaning.py --skip-qdrant
+export QDRANT_URL="https://your-cluster-url"
+export QDRANT_API_KEY="your-api-key"
+python cleaning.py
 ```
 
-## Evaluate post relevance
-
-```bash
-python relevance.py
-```
-
-`relevance.py` independently compares every post with its assigned book's
-description. It writes `data/posts_with_relevance.csv` with a semantic
-`relevance_score` and `predicted_is_book_related` value. The original
-`is_book_related` label is retained only so the synthetic predictions can be
-evaluated; it is not an input to the predictor. This is currently an auditing
-step and does not replace the original label used by `cleaning.py`.
-
-This writes `data/posts_processed.csv` and `data/post_embeddings.npy`.
+This writes `data/posts_processed.csv` and `data/post_embeddings.npy` as
+reproducible build artifacts, then recreates the `posts` collection in Qdrant
+Cloud and uploads the post vectors. These files are not a local Qdrant database.
 Rows with `is_book_related=0` remain in the raw synthetic dataset as realistic
 noise but are excluded before embeddings and recommendation indexing.
 
@@ -76,9 +67,10 @@ real deployment would require independently labelled human-written posts.
 python -m streamlit run app.py
 ```
 
-Without Qdrant credentials, the app builds a local in-memory index from the
-processed synthetic data. With a Qdrant cloud collection, set `QDRANT_URL` and
-`QDRANT_API_KEY` before running `cleaning.py` without `--skip-qdrant`.
+The app requires Qdrant Cloud. Provide `QDRANT_URL` and `QDRANT_API_KEY` as
+environment variables or Streamlit secrets. Never commit their real values.
+Run `cleaning.py` once with those environment variables before starting the
+app so the cloud `posts` collection exists and contains the current vectors.
 
 ## How ranking works
 

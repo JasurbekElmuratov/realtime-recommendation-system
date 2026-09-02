@@ -22,9 +22,6 @@ data/recommendations.csv
 credentials*.json
 service-account*.json
 
-# Additional generated data
-data/posts_with_relevance.csv
-
 # Testing and editor artifacts
 .pytest_cache/
 .mypy_cache/

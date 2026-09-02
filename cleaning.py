@@ -1,6 +1,5 @@
-"""Clean, classify, embed, and optionally index English book posts."""
+"""Clean, classify, embed, and upload English book posts to Qdrant Cloud."""
 
-import argparse
 import os
 import re
 from pathlib import Path
@@ -12,7 +11,7 @@ from qdrant_client.models import Distance, PointStruct, VectorParams
 from sentence_transformers import SentenceTransformer
 
 from content_classifier import LinearContentClassifier, load_content_classifier
-from relevance import MODEL_NAME, load_model
+from embedding_model import MODEL_NAME, load_embedding_model
 
 COLLECTION_NAME = "posts"
 BASE_DIR = Path(__file__).resolve().parent
@@ -93,10 +92,25 @@ def make_payload(post: object) -> dict[str, object]:
     return {"post_id": int(post.post_id), "book_id": int(post.book_id), "book_title": str(post.book_title), "content": post.content, "content_type": post.content_type, "word_count": int(post.word_count), "view_count": int(post.view_count), "like_count": int(post.like_count), "comment_count": int(post.comment_count), "repost_count": int(post.repost_count), "published_at": post.published_at}
 
 
-def upload_to_qdrant(posts: pd.DataFrame, embeddings: np.ndarray) -> None:
+def cloud_qdrant_client() -> QdrantClient:
+    """Create a cloud client only when both required credentials exist."""
+    url = os.getenv("QDRANT_URL")
+    api_key = os.getenv("QDRANT_API_KEY")
+    if not url or not api_key:
+        raise RuntimeError(
+            "Set QDRANT_URL and QDRANT_API_KEY before uploading posts"
+        )
+    return QdrantClient(url=url, api_key=api_key)
+
+
+def upload_to_qdrant(
+    posts: pd.DataFrame,
+    embeddings: np.ndarray,
+    client: QdrantClient | None = None,
+) -> None:
     if len(posts) != len(embeddings):
         raise ValueError("Every processed post must have one embedding")
-    client = QdrantClient(url=os.environ["QDRANT_URL"], api_key=os.environ["QDRANT_API_KEY"])
+    client = client or cloud_qdrant_client()
     client.recreate_collection(collection_name=COLLECTION_NAME, vectors_config=VectorParams(size=embeddings.shape[1], distance=Distance.COSINE))
     for start in range(0, len(posts), 100):
         batch = posts.iloc[start : start + 100]
@@ -104,24 +118,18 @@ def upload_to_qdrant(posts: pd.DataFrame, embeddings: np.ndarray) -> None:
         client.upsert(collection_name=COLLECTION_NAME, points=points)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Clean, embed, classify, and index English book posts.")
-    parser.add_argument("--skip-qdrant", action="store_true", help="Build local files without uploading to Qdrant")
-    return parser
-
-
-def main(argv: list[str] | None = None) -> None:
-    args = build_parser().parse_args(argv)
+def main() -> None:
+    client = cloud_qdrant_client()
     posts = enrich_post_books(prepare_posts_dataframe())
-    embeddings = create_embeddings(posts["content"].tolist(), load_model())
+    embeddings = create_embeddings(posts["content"].tolist(), load_embedding_model())
     posts = classify_posts(posts, embeddings)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     posts.to_csv(PROCESSED_POSTS_FILE, index=False)
     np.save(POST_EMBEDDINGS_FILE, embeddings)
-    if not args.skip_qdrant:
-        upload_to_qdrant(posts, embeddings)
+    upload_to_qdrant(posts, embeddings, client)
     print(f"Processed posts: {len(posts)}")
     print(f"Embedding shape: {embeddings.shape}")
+    print(f"Uploaded posts to Qdrant Cloud collection: {COLLECTION_NAME}")
 
 
 if __name__ == "__main__":

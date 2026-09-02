@@ -12,10 +12,10 @@ import pandas as pd
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 
+from embedding_model import MODEL_NAME, load_embedding_model
 from genre_taxonomy import GENRES, GENERAL_BOOK_PROFILE, GENERAL_BOOK_TERMS
 
 
-MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 COLLECTION_NAME = "posts"
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -369,7 +369,7 @@ def save_and_print(feed: list[dict]) -> None:
 
 def main() -> None:
     profile_texts, exact_terms = build_user_profile(USER_ID)
-    model = SentenceTransformer(MODEL_NAME)
+    model = load_embedding_model()
     book_vectors = model.encode(profile_texts, normalize_embeddings=True)
     user_vector = book_vectors.mean(axis=0)
     user_vector = user_vector / np.linalg.norm(user_vector)
