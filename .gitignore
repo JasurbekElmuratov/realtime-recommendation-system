@@ -1,0 +1,32 @@
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+.env
+.env.*
+.streamlit/secrets.toml
+
+# Generated local recommendation artifacts
+data/posts_processed.csv
+data/post_embeddings.npy
+data/interaction_events.csv
+data/user_book_events.csv
+data/recommendations.csv
+
+
+# Additional credential and certificate files
+.envrc
+*.pem
+*.key
+*.p12
+credentials*.json
+service-account*.json
+
+# Additional generated data
+data/posts_with_relevance.csv
+
+# Testing and editor artifacts
+.pytest_cache/
+.mypy_cache/
+.coverage
+.idea/

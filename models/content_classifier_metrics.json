@@ -1,0 +1,102 @@
+{
+  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "embedding_dimensions": 384,
+  "intent_feature_names": [
+    "recommendation_intent",
+    "discussion_intent",
+    "question_mark",
+    "reader_address",
+    "evaluation_language",
+    "first_person",
+    "word_count_scaled",
+    "rhetorical_question"
+  ],
+  "classifier_input_dimensions": 392,
+  "recommendation_requires_explicit_intent": true,
+  "classifier": "multinomial logistic regression (linear softmax head)",
+  "random_seed": 42,
+  "regularization_c": 1.0,
+  "splits": {
+    "train": {
+      "rows": 386,
+      "unique_books": 219,
+      "class_counts": {
+        "discussion": 129,
+        "recommendation": 128,
+        "review": 129
+      }
+    },
+    "validation": {
+      "rows": 77,
+      "unique_books": 43,
+      "class_counts": {
+        "discussion": 25,
+        "recommendation": 26,
+        "review": 26
+      }
+    },
+    "test": {
+      "rows": 77,
+      "unique_books": 44,
+      "class_counts": {
+        "discussion": 26,
+        "recommendation": 26,
+        "review": 25
+      }
+    }
+  },
+  "validation": {
+    "accuracy": 1.0,
+    "macro_precision": 1.0,
+    "macro_recall": 1.0,
+    "macro_f1": 1.0
+  },
+  "test": {
+    "accuracy": 1.0,
+    "macro_precision": 1.0,
+    "macro_recall": 1.0,
+    "macro_f1": 1.0,
+    "per_class": {
+      "discussion": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 26
+      },
+      "recommendation": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 26
+      },
+      "review": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 25
+      }
+    },
+    "confusion_matrix": [
+      [
+        26,
+        0,
+        0
+      ],
+      [
+        0,
+        26,
+        0
+      ],
+      [
+        0,
+        0,
+        25
+      ]
+    ],
+    "confusion_matrix_labels": [
+      "discussion",
+      "recommendation",
+      "review"
+    ]
+  }
+}

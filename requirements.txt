@@ -1,0 +1,7 @@
+numpy
+pandas
+qdrant-client
+scikit-learn>=1.4,<2
+sentence-transformers
+streamlit>=1.41,<2
+torch
