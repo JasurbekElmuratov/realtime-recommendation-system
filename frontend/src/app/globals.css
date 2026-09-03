@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+:root {
+  --background: #fbfaf6;
+  --surface: #fffefb;
+  --surface-translucent: rgba(255, 254, 251, 0.94);
+  --paper: #fdfcf8;
+  --hover: #f7f6f0;
+  --soft: #f0f1eb;
+  --line: #e7e3da;
+  --line-strong: #d5d0c5;
+  --ink: #191a18;
+  --muted: #74736e;
+  --accent: #667c55;
+  --accent-dark: #526845;
+  --coral: #db744d;
+  --coral-dark: #c7603c;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--ink);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* { box-sizing: border-box; }
+html { background: var(--background); }
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--ink);
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 16px;
+}
+
+button, a { -webkit-tap-highlight-color: transparent; }
+button { cursor: pointer; }
+.font-serif { font-family: Georgia, "Times New Roman", serif; }
+
+.mobile-nav-link { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 0.15rem; padding: 0.3rem 0; color: var(--muted); font-size: 0.68rem; font-weight: 600; }
+.action-button { display: inline-flex; align-items: center; gap: 0.35rem; border-radius: 999px; padding: 0.35rem 0.5rem; }
+.action-button:hover { background: var(--soft); color: var(--ink); }
+.post-card { border: 1px solid var(--line); border-radius: 1rem; background: var(--surface); padding: 1.25rem; box-shadow: 0 6px 24px rgba(46,43,34,.025); transition: border-color 150ms ease, box-shadow 150ms ease; }
+.post-card:hover { border-color: var(--line-strong); box-shadow: 0 8px 30px rgba(46,43,34,.045); }
+.tab-button { position: relative; padding: .7rem .8rem 1rem; color: var(--muted); font-size: .95rem; font-weight: 500; }
+.tab-button-active { color: var(--accent); font-weight: 600; }
+.tab-button-active::after { content: ""; position: absolute; inset: auto .2rem -1px; height: 2px; background: var(--accent); }
+.rail-card { border: 1px solid var(--line); border-radius: 1rem; background: var(--surface); padding: 1.4rem; box-shadow: 0 6px 24px rgba(46,43,34,.025); }
+.rail-title { font-family: Georgia, "Times New Roman", serif; font-size: 1.15rem; font-weight: 700; }
+
+@keyframes refresh-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(310%); } }
+.refresh-bar { animation: refresh-slide 900ms ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .refresh-bar { animation: none; width: 100%; } }
