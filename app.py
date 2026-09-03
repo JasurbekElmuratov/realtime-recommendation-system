@@ -301,6 +301,7 @@ def render_recommendations() -> None:
         with st.container(border=True):
             st.markdown(f"### {rank}. {book_title}")
             st.caption(
+                f"@{post.get('nickname', 'anonymous_reader')} · "
                 f"{post['content_type'].title()} · Book ID {book_id or 'unknown'} · "
                 f"Topic {item['topic']} · "
                 f"Feed score {item['score']:.3f}"

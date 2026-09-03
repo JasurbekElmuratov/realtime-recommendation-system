@@ -1,5 +1,6 @@
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -11,11 +12,32 @@ from cleaning import (
     classify_posts,
     cloud_qdrant_client,
     enrich_post_books,
+    make_payload,
     prepare_posts_dataframe,
 )
 
 
 class CleaningTests(unittest.TestCase):
+    def test_qdrant_payload_contains_synthetic_identity(self) -> None:
+        post = SimpleNamespace(
+            post_id=1,
+            user_id=20,
+            nickname="quiet_owl",
+            book_id=10,
+            book_title="Sample Book",
+            content="A sufficiently detailed synthetic book reaction.",
+            content_type="review",
+            word_count=7,
+            view_count=5,
+            like_count=2,
+            comment_count=1,
+            repost_count=0,
+            published_at="2026-01-01T00:00:00Z",
+        )
+        payload = make_payload(post)
+        self.assertEqual(payload["user_id"], 20)
+        self.assertEqual(payload["nickname"], "quiet_owl")
+
     def test_cloud_credentials_are_required_before_processing(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             with self.assertRaisesRegex(RuntimeError, "QDRANT_URL"):
