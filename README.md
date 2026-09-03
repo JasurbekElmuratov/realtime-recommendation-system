@@ -19,7 +19,7 @@ The project uses these CSV files in `data/`:
 - `books.csv`: public bibliographic metadata with original demo descriptions;
   `book_id,title,author,genre,description`
 - `posts.csv`: fully synthetic discussion posts;
-  `post_id,user_id,book_id,content,published_at,view_count,like_count,comment_count,repost_count,is_book_related,writing_style,content_length`
+  `post_id,user_id,nickname,book_id,content,published_at,view_count,like_count,comment_count,repost_count,is_book_related,writing_style,content_length`
 - `labelled_posts_training.csv`: balanced synthetic classifier data containing
   180 reviews, 180 recommendations, and 180 discussions
 - `user_events.csv`: `user_id,book_id,event,timestamp`, where event is `read`,

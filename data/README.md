@@ -14,7 +14,8 @@ user posts, real account IDs, behavioral histories, private data, or content
 copied from social-media platforms.
 
 `posts.csv` includes deliberately varied writing styles and a small off-topic
-sample. The `is_book_related` field marks which rows belong in the recommender.
+sample. Each synthetic `user_id` has one consistent, unique synthetic nickname.
+The `is_book_related` field marks which rows belong in the recommender.
 
 `labelled_posts_training.csv` is a balanced 540-row content-type training set:
 180 reviews, 180 recommendations, and 180 discussions. It includes 101 difficult

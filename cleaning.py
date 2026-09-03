@@ -89,7 +89,7 @@ def enrich_post_books(posts: pd.DataFrame, *, books_path: str | Path = BOOKS_FIL
 
 
 def make_payload(post: object) -> dict[str, object]:
-    return {"post_id": int(post.post_id), "book_id": int(post.book_id), "book_title": str(post.book_title), "content": post.content, "content_type": post.content_type, "word_count": int(post.word_count), "view_count": int(post.view_count), "like_count": int(post.like_count), "comment_count": int(post.comment_count), "repost_count": int(post.repost_count), "published_at": post.published_at}
+    return {"post_id": int(post.post_id), "user_id": int(post.user_id), "nickname": str(post.nickname), "book_id": int(post.book_id), "book_title": str(post.book_title), "content": post.content, "content_type": post.content_type, "word_count": int(post.word_count), "view_count": int(post.view_count), "like_count": int(post.like_count), "comment_count": int(post.comment_count), "repost_count": int(post.repost_count), "published_at": post.published_at}
 
 
 def cloud_qdrant_client() -> QdrantClient:
