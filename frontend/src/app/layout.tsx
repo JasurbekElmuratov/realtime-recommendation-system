@@ -7,10 +7,13 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "BookFeed — Read, share, discover",
-  description: "A book-centered social feed with transparent personalized recommendations.",
+  description:
+    "A book-centered social feed with transparent personalized recommendations.",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({
+  children,
+}: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full">

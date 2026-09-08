@@ -1,4 +1,8 @@
-"""Generate a seven-item recommendation feed for one configured user."""
+"""Find similar posts, score them, and fill a personalized book feed.
+
+Search order: user's interests -> closest genres -> neighboring genres -> books
+in general. The command at the bottom also saves a seven-post example feed.
+"""
 
 import math
 import os
@@ -128,10 +132,12 @@ def freshness_score(value: object) -> float:
 
 def exact_match_score(payload: dict[str, object], terms: list[str]) -> float:
     text = str(payload["content"]).lower()
-    matches = sum(
-        re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text) is not None
-        for term in terms
-    )
+    matches = 0
+    for term in terms:
+        # Match complete words or phrases, so "art" does not match "start".
+        pattern = rf"(?<!\w){re.escape(term)}(?!\w)"
+        if re.search(pattern, text):
+            matches += 1
     return min(matches / 2, 1.0)
 
 
@@ -140,19 +146,20 @@ def rank_results(
     exact_terms: list[str],
     blocked_posts: set[str],
 ):
-    results = [
-        result
-        for result in results
-        if str(result.payload["post_id"]) not in blocked_posts
-        and result.payload["content_type"] in {"review", "recommendation", "discussion"}
-    ]
-
-    max_log_views = max(
-        [math.log1p(result.payload["view_count"]) for result in results] + [1.0]
-    )
+    """Calculate the same weighted score for every allowed search result."""
+    allowed_results = []
+    max_log_views = 1.0
+    for result in results:
+        post = result.payload
+        if str(post["post_id"]) in blocked_posts:
+            continue
+        if post["content_type"] not in {"review", "recommendation", "discussion"}:
+            continue
+        allowed_results.append(result)
+        max_log_views = max(max_log_views, math.log1p(post["view_count"]))
     ranked = []
 
-    for result in results:
+    for result in allowed_results:
         post = result.payload
         views = post["view_count"]
         features = {
@@ -210,29 +217,35 @@ def search(
 
 
 def merge_candidates(current: list[dict], new: list[dict]) -> list[dict]:
+    """Keep each post once, preferring a closer topic and then a higher score."""
     best = {}
     for item in current + new:
         post_id = str(item["result"].payload["post_id"])
         old = best.get(post_id)
-        if old is None or (item["level"], -item["score"]) < (
-            old["level"],
-            -old["score"],
-        ):
+        if old is None:
+            best[post_id] = item
+        elif item["level"] < old["level"]:
+            best[post_id] = item
+        elif item["level"] == old["level"] and item["score"] > old["score"]:
             best[post_id] = item
     return list(best.values())
 
 
 def build_feed(candidates: list[dict], feed_size: int = FEED_SIZE) -> list[dict]:
+    """Order by topic distance, post type, length, and finally weighted score."""
     content_type_order = {"review": 0, "discussion": 1, "recommendation": 2}
-    candidates = sorted(
-        candidates,
-        key=lambda item: (
+
+    def feed_order(item):
+        post = item["result"].payload
+        # Smaller values come first. Negatives put larger lengths/scores first.
+        return (
             item["level"],
-            content_type_order.get(item["result"].payload["content_type"], 3),
-            -int(item["result"].payload["word_count"]),
+            content_type_order.get(post["content_type"], 3),
+            -int(post["word_count"]),
             -item["score"],
-        ),
-    )
+        )
+
+    candidates = sorted(candidates, key=feed_order)
     return candidates[:feed_size]
 
 
@@ -249,14 +262,12 @@ def genre_search_plan(
     user_vector: np.ndarray,
     vectors: dict[str, np.ndarray],
 ) -> list[tuple[int, str]]:
-    scored = sorted(
-        (
-            (name, float(np.dot(user_vector, vector)))
-            for name, vector in vectors.items()
-        ),
-        key=lambda item: item[1],
-        reverse=True,
-    )
+    """Start from two closest genres, then explore their neighbors twice."""
+    scored = []
+    for name, vector in vectors.items():
+        similarity = float(np.dot(user_vector, vector))
+        scored.append((name, similarity))
+    scored.sort(key=lambda item: item[1], reverse=True)
     primary = [name for name, _ in scored[:2]]
     plan = [(1, name) for name in primary]
     seen = set(primary)
@@ -282,8 +293,9 @@ def recommend_for_profile(
     blocked_posts: set[str],
     feed_size: int = FEED_SIZE,
 ) -> list[dict]:
-    """Return a relevance-first personalized feed."""
+    """Search increasingly broad topics until enough posts are available."""
 
+    # 1. First search with the user's own book profile.
     candidates = search(
         client,
         user_vector.tolist(),
@@ -296,10 +308,13 @@ def recommend_for_profile(
     feed = build_feed(candidates, feed_size)
 
     if len(feed) < feed_size:
+        # 2. Expand through the genre map only when the first search is short.
         vectors = genre_vectors(model)
         plan = genre_search_plan(user_vector, vectors)
         for level in (1, 2, 3):
-            for _, name in [item for item in plan if item[0] == level]:
+            for genre_level, name in plan:
+                if genre_level != level:
+                    continue
                 found = search(
                     client,
                     vectors[name].tolist(),
@@ -315,6 +330,7 @@ def recommend_for_profile(
                 break
 
     if len(feed) < feed_size:
+        # 3. Last resort: search all book topics without a similarity minimum.
         general_vector = model.encode(
             GENERAL_BOOK_PROFILE,
             normalize_embeddings=True,

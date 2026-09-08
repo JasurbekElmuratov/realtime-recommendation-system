@@ -57,7 +57,10 @@ def grouped_split_labels(
         fold_ids[held_out] = fold_id
     if np.any(fold_ids < 0):
         raise RuntimeError("Every training row must be assigned to one fold")
-    return np.where(fold_ids == 0, "validation", np.where(fold_ids == 1, "test", "train"))
+    splits = np.full(len(frame), "train", dtype="U10")
+    splits[fold_ids == 0] = "validation"
+    splits[fold_ids == 1] = "test"
+    return splits
 
 
 def macro_metrics(actual: np.ndarray, predicted: np.ndarray) -> dict[str, float]:
@@ -85,15 +88,15 @@ def detailed_metrics(actual: np.ndarray, predicted: np.ndarray) -> dict[str, obj
         average=None,
         zero_division=0,
     )
-    summary["per_class"] = {
-        label: {
+    per_class = {}
+    for index, label in enumerate(EXPECTED_CLASSES):
+        per_class[label] = {
             "precision": float(precision[index]),
             "recall": float(recall[index]),
             "f1": float(f1[index]),
             "support": int(support[index]),
         }
-        for index, label in enumerate(EXPECTED_CLASSES)
-    }
+    summary["per_class"] = per_class
     summary["confusion_matrix"] = confusion_matrix(
         actual, predicted, labels=list(EXPECTED_CLASSES)
     ).tolist()
@@ -107,7 +110,10 @@ def train_linear_head(
     """Select regularization strength using only the validation split."""
     train_mask = splits == "train"
     validation_mask = splits == "validation"
-    best: tuple[float, float, LogisticRegression, dict[str, float]] | None = None
+    best_classifier = None
+    best_regularization = None
+    best_metrics = None
+    best_f1 = -1.0
     for regularization in CANDIDATE_REGULARIZATION:
         classifier = LogisticRegression(
             C=regularization,
@@ -118,11 +124,13 @@ def train_linear_head(
         classifier.fit(embeddings[train_mask], labels[train_mask])
         validation_predictions = classifier.predict(embeddings[validation_mask])
         metrics = macro_metrics(labels[validation_mask], validation_predictions)
-        candidate = (metrics["macro_f1"], -regularization, classifier, metrics)
-        if best is None or candidate[:2] > best[:2]:
-            best = candidate
-    assert best is not None
-    return best[2], -best[1], best[3]
+        # Values are tried smallest first, so equal scores keep the smaller C.
+        if metrics["macro_f1"] > best_f1:
+            best_classifier = classifier
+            best_regularization = regularization
+            best_metrics = metrics
+            best_f1 = metrics["macro_f1"]
+    return best_classifier, best_regularization, best_metrics
 
 
 def save_artifact(
@@ -166,7 +174,9 @@ def main(argv: list[str] | None = None) -> None:
         normalize_embeddings=True,
         show_progress_bar=True,
     ).astype("float32")
-    classifier_inputs = build_classifier_inputs(frame["content"].astype(str).tolist(), embeddings)
+    classifier_inputs = build_classifier_inputs(
+        frame["content"].astype(str).tolist(), embeddings
+    )
     labels = frame["content_type"].astype(str).to_numpy()
     splits = frame["dataset_split"].to_numpy()
     classifier, best_regularization, validation_metrics = train_linear_head(
@@ -195,17 +205,17 @@ def main(argv: list[str] | None = None) -> None:
     if not np.allclose(test_probabilities, portable_probabilities, atol=1e-5):
         raise RuntimeError("Portable probabilities do not match training probabilities")
 
-    split_summary = {
-        split: {
-            "rows": int(np.sum(splits == split)),
-            "unique_books": int(frame.loc[splits == split, "book_id"].nunique()),
-            "class_counts": {
-                label: int(np.sum((splits == split) & (labels == label)))
-                for label in EXPECTED_CLASSES
-            },
+    split_summary = {}
+    for split in ("train", "validation", "test"):
+        split_mask = splits == split
+        class_counts = {}
+        for label in EXPECTED_CLASSES:
+            class_counts[label] = int(np.sum(split_mask & (labels == label)))
+        split_summary[split] = {
+            "rows": int(np.sum(split_mask)),
+            "unique_books": int(frame.loc[split_mask, "book_id"].nunique()),
+            "class_counts": class_counts,
         }
-        for split in ("train", "validation", "test")
-    }
     report = {
         "embedding_model": MODEL_NAME,
         "embedding_dimensions": int(embeddings.shape[1]),
