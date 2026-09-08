@@ -9,9 +9,6 @@ from typing import Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
-import torch
-from torch import nn
-from torch.nn import functional as F
 
 
 READ_WEIGHT = 1.0
@@ -26,6 +23,7 @@ POST_EVENT_FIELDS = (
 )
 
 def normalize_vector(vector: np.ndarray) -> np.ndarray:
+    """Keep a vector's direction and make its length equal to one."""
     value = np.asarray(vector, dtype="float32")
     norm = float(np.linalg.norm(value))
     if not np.isfinite(norm) or norm == 0:
@@ -52,11 +50,11 @@ def build_post_book_lookup(
     lookup: dict[int, tuple[int | None, str]] = {}
     for row in merged.itertuples(index=False):
         book_id = None if pd.isna(row.book_id) else int(row.book_id)
-        title = (
-            str(row.title)
-            if not pd.isna(row.title)
-            else ("Unknown book" if book_id is None else f"Book #{book_id}")
-        )
+        title = "Unknown book"
+        if not pd.isna(row.title):
+            title = str(row.title)
+        elif book_id is not None:
+            title = f"Book #{book_id}"
         lookup[int(row.post_id)] = (book_id, title)
     return lookup
 
@@ -120,10 +118,11 @@ def rank_popular_books(
         total_views=("view_count", "sum"),
     )
     popular = books.merge(summary, on="book_id", how="inner", validate="one_to_one")
-    return popular.sort_values(
+    popular = popular.sort_values(
         ["popularity_score", "post_count", "total_views", "title"],
         ascending=[False, False, False, True],
-    ).head(limit).reset_index(drop=True)
+    )
+    return popular.head(limit).reset_index(drop=True)
 
 
 def build_profile_vector(
@@ -132,7 +131,7 @@ def build_profile_vector(
     read_book_ids: Sequence[object],
     saved_book_ids: Sequence[object],
 ) -> tuple[np.ndarray, list[str]]:
-    """Build a weighted neural profile and exact terms from selected books."""
+    """Average the chosen book vectors: read weight 1.0, saved weight 0.8."""
 
     read_ids = [str(value) for value in read_book_ids]
     saved_ids = [str(value) for value in saved_book_ids]
@@ -150,13 +149,11 @@ def build_profile_vector(
 
     selected_ids = read_ids + saved_ids
     selected = [indexed.loc[book_id] for book_id in selected_ids]
-    vectors = np.asarray(
-        model.encode(
-            [describe_book(book) for book in selected],
-            normalize_embeddings=True,
-        ),
-        dtype="float32",
-    )
+    book_descriptions = []
+    for book in selected:
+        book_descriptions.append(describe_book(book))
+    vectors = model.encode(book_descriptions, normalize_embeddings=True)
+    vectors = np.asarray(vectors, dtype="float32")
     weights = np.asarray(
         [READ_WEIGHT] * len(read_ids) + [SAVED_WEIGHT] * len(saved_ids),
         dtype="float32",
@@ -165,12 +162,12 @@ def build_profile_vector(
 
     exact_terms: set[str] = set()
     for book in selected:
-        exact_terms.update((str(book.title).lower(), str(book.author).lower()))
-        exact_terms.update(
-            genre.strip().lower()
-            for genre in str(book.genre).split("|")
-            if genre.strip()
-        )
+        exact_terms.add(str(book.title).lower())
+        exact_terms.add(str(book.author).lower())
+        for genre in str(book.genre).split("|"):
+            genre = genre.strip().lower()
+            if genre:
+                exact_terms.add(genre)
     return profile, sorted(exact_terms)
 
 
@@ -181,7 +178,11 @@ def learn_preference_vector(
     *,
     training_steps: int = 120,
 ) -> tuple[np.ndarray, str]:
-    """Learn one personalized neural preference layer over frozen embeddings."""
+    """Move the profile toward liked posts and away from disliked posts.
+
+    Mixed feedback trains one small vector; the sentence model stays unchanged.
+    With only likes or only dislikes, use a simple average-based update instead.
+    """
 
     base = normalize_vector(base_vector)
     vectors = np.asarray(feedback_vectors, dtype="float32")
@@ -202,9 +203,14 @@ def learn_preference_vector(
             direction = -direction
         return normalize_vector(0.75 * base + 0.25 * direction), "centroid_update"
 
+    # Only feedback training needs PyTorch. Browsing books does not load it.
+    import torch
+    from torch import nn
+    from torch.nn import functional as F
+
     torch.manual_seed(7)
-    x = torch.tensor(vectors, dtype=torch.float32)
-    y = torch.tensor(targets, dtype=torch.float32)
+    post_vectors = torch.tensor(vectors, dtype=torch.float32)
+    liked_labels = torch.tensor(targets, dtype=torch.float32)
     initial = torch.tensor(base, dtype=torch.float32)
     preference = nn.Parameter(initial.clone())
     bias = nn.Parameter(torch.zeros(1, dtype=torch.float32))
@@ -213,8 +219,10 @@ def learn_preference_vector(
     for _ in range(training_steps):
         optimizer.zero_grad()
         unit_preference = F.normalize(preference, dim=0)
-        logits = 6.0 * (x @ unit_preference) + bias
-        prediction_loss = F.binary_cross_entropy_with_logits(logits, y)
+        # Dot products measure similarity to the current preference direction.
+        logits = 6.0 * (post_vectors @ unit_preference) + bias
+        prediction_loss = F.binary_cross_entropy_with_logits(logits, liked_labels)
+        # Keep a small round of feedback from erasing the original interests.
         stability_loss = 0.20 * torch.sum((unit_preference - initial) ** 2)
         (prediction_loss + stability_loss).backward()
         optimizer.step()
@@ -245,19 +253,15 @@ def log_book_events(
     saved_book_ids: Sequence[object],
 ) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
-    rows = [
-        {
-            "timestamp": timestamp,
-            "user_id": user_id,
-            "book_id": book_id,
-            "event": event,
-        }
-        for event, book_ids in (
-            ("read", read_book_ids),
-            ("saved", saved_book_ids),
-        )
-        for book_id in book_ids
-    ]
+    rows = []
+    for event, book_ids in [("read", read_book_ids), ("saved", saved_book_ids)]:
+        for book_id in book_ids:
+            rows.append({
+                "timestamp": timestamp,
+                "user_id": user_id,
+                "book_id": book_id,
+                "event": event,
+            })
     _append_rows(path, BOOK_EVENT_FIELDS, rows)
 
 
@@ -268,14 +272,13 @@ def log_post_feedback(
     profile_name: str,
 ) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
-    rows = [
-        {
+    rows = []
+    for post_id, liked in feedback.items():
+        rows.append({
             "timestamp": timestamp,
             "user_id": user_id,
             "post_id": post_id,
             "event": "liked" if liked else "disliked",
             "profile_name": profile_name,
-        }
-        for post_id, liked in feedback.items()
-    ]
+        })
     _append_rows(path, POST_EVENT_FIELDS, rows)

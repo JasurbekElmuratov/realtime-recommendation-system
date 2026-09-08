@@ -14,9 +14,12 @@ export type Interest = (typeof INTERESTS)[number];
 export type InteractionEventType =
   | "impression"
   | "post_click"
+  | "post_dwell"
   | "book_open"
   | "like"
+  | "unlike"
   | "save"
+  | "unsave"
   | "comment"
   | "search"
   | "follow_author"
@@ -31,17 +34,27 @@ export interface InteractionEvent {
   query?: string;
   active?: boolean;
   timestamp: string;
+  sessionId: string;
+  feedRequestId?: string;
+  rankPosition?: number;
+  recommendationScore?: number;
+  dwellTimeMs?: number;
+  postWordCount?: number;
+  expectedReadingTimeMs?: number;
+  readingRatio?: number;
+  syncStatus?: "pending" | "synced" | "failed";
 }
 
 export interface Book {
   id: string;
   title: string;
   author: string;
-  genres: Interest[];
+  genres: string[];
   description: string;
-  year: number;
-  coverColor: string;
-  coverTextColor: string;
+  year?: number | null;
+  coverUrl?: string;
+  coverColor?: string;
+  coverTextColor?: string;
 }
 
 export interface Post {
@@ -52,6 +65,7 @@ export interface Post {
   avatarColor: string;
   bookId: string;
   text: string;
+  wordCount: number;
   createdAt: string;
   likes: number;
   comments: number;
@@ -75,6 +89,7 @@ export interface FeedItem {
   book: Book;
   signals: RecommendationSignals;
   rank: number;
+  feedRequestId: string;
 }
 
 export interface CandidateDebugRow {
@@ -88,6 +103,7 @@ export interface CandidateDebugRow {
 
 export interface RecommendationDebugSnapshot {
   generatedAt: string;
+  retrievalMode: string;
   profile: Array<{ interest: string; weight: number }>;
   candidateGenerationCount: number;
   retrievedCandidateCount: number;
@@ -105,6 +121,40 @@ export interface RecommendationDebugSnapshot {
 export interface FeedResponse {
   items: FeedItem[];
   debug: RecommendationDebugSnapshot;
+  nextCursor: string | null;
+  hasMore: boolean;
+  feedRequestId: string;
+}
+
+export interface BookFeedUser {
+  id: string;
+  username: string;
+  displayName: string;
+  bio: string;
+  following: number;
+  followers: number;
+  postCount: number;
+  savedCount: number;
+  likedPostIds: string[];
+  savedPostIds: string[];
+  notInterestedPostIds: string[];
+  followedBookIds: string[];
+  posts: FeedItem[];
+  savedPosts: FeedItem[];
+  likedPosts: FeedItem[];
+  recentEvents: InteractionEvent[];
+}
+
+export interface SearchResponse {
+  posts: FeedItem[];
+  books: Book[];
+  feedRequestId: string;
+}
+
+export interface EventContext {
+  feedRequestId?: string;
+  rankPosition?: number;
+  recommendationScore?: number;
 }
 
 export type FeedStatus = "idle" | "loading" | "refreshing" | "ready" | "error";

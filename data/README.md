@@ -26,3 +26,16 @@ recommendations, all 180 recommendations were generated with varied wording
 and writing styles. The `origin` column records these sources.
 `labelled_posts_training.xlsx` contains the same rows plus a readable summary
 sheet for auditing the labels.
+
+`users.csv` contains only non-sensitive demo identity metadata. The default UI
+user is `1`, a dedicated fresh demo account that owns no seeded posts and begins with no interaction history.
+
+`interactions.csv` is the append-only FastAPI event log. It records event ID,
+user, event type, optional post/book/query targets, UTC timestamp, browser
+session, producing feed request, rank position, recommendation score, and
+normalized reading-time fields (`dwell_time_ms`, `post_word_count`,
+`expected_reading_time_ms`, and `reading_ratio`). It
+must never contain passwords, email addresses, authentication tokens, or real
+people's private behavior.
+The file is local runtime data and is ignored by Git; FastAPI creates a clean
+header automatically when it does not exist.

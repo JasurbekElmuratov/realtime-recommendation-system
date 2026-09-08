@@ -1,6 +1,5 @@
 """Portable inference helpers for the trained post content classifier."""
 
-from dataclasses import dataclass
 from pathlib import Path
 import re
 from typing import Sequence
@@ -82,18 +81,25 @@ def build_classifier_inputs(texts: Sequence[str], embeddings: np.ndarray) -> np.
     return np.concatenate([semantic, intent], axis=1).astype("float32")
 
 
-@dataclass(frozen=True)
 class LinearContentClassifier:
-    """A three-class softmax head trained over frozen sentence embeddings."""
+    """Saved weights for predicting review, recommendation, or discussion."""
 
-    weights: np.ndarray
-    bias: np.ndarray
-    classes: np.ndarray
-    embedding_model: str
-    embedding_dimensions: int | None = None
-    text_feature_names: tuple[str, ...] = ()
+    def __init__(
+        self,
+        weights: np.ndarray,
+        bias: np.ndarray,
+        classes: np.ndarray,
+        embedding_model: str,
+        embedding_dimensions: int | None = None,
+        text_feature_names: tuple[str, ...] = (),
+    ):
+        self.weights = weights
+        self.bias = bias
+        self.classes = classes
+        self.embedding_model = embedding_model
+        self.embedding_dimensions = embedding_dimensions
+        self.text_feature_names = text_feature_names
 
-    def __post_init__(self) -> None:
         if self.weights.ndim != 2:
             raise ValueError("Classifier weights must be a two-dimensional matrix")
         if self.bias.shape != (self.weights.shape[0],):
@@ -107,6 +113,19 @@ class LinearContentClassifier:
                     f"Classifier expects {expected} combined inputs, got {self.weights.shape[1]}"
                 )
 
+    def _prediction_summary(self, probabilities):
+        """Choose the largest probability and its lead over second place."""
+        best_indices = probabilities.argmax(axis=1)
+        sorted_probabilities = np.sort(probabilities, axis=1)
+        confidence = probabilities[np.arange(len(probabilities)), best_indices]
+        margin = sorted_probabilities[:, -1] - sorted_probabilities[:, -2]
+        return (
+            self.classes[best_indices],
+            confidence.astype("float32"),
+            margin.astype("float32"),
+            probabilities.astype("float32"),
+        )
+
     def predict_embeddings(
         self, embeddings: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -116,20 +135,14 @@ class LinearContentClassifier:
             raise ValueError(
                 f"Expected embeddings shaped (n, {self.weights.shape[1]}), got {values.shape}"
             )
+        # Each class gets a weighted sum of the input features plus a bias.
         logits = values @ self.weights.T + self.bias
+        # Softmax turns those three scores into probabilities that sum to one.
+        # Subtracting the maximum keeps exponentials in a safe numeric range.
         logits -= logits.max(axis=1, keepdims=True)
         probabilities = np.exp(logits)
         probabilities /= probabilities.sum(axis=1, keepdims=True)
-        best_indices = probabilities.argmax(axis=1)
-        sorted_probabilities = np.sort(probabilities, axis=1)
-        confidence = probabilities[np.arange(len(values)), best_indices]
-        margin = sorted_probabilities[:, -1] - sorted_probabilities[:, -2]
-        return (
-            self.classes[best_indices],
-            confidence.astype("float32"),
-            margin.astype("float32"),
-            probabilities.astype("float32"),
-        )
+        return self._prediction_summary(probabilities)
 
     def predict(
         self, texts: Sequence[str], embeddings: np.ndarray
@@ -147,28 +160,19 @@ class LinearContentClassifier:
                 f"Expected semantic embeddings shaped (n, {self.embedding_dimensions})"
             )
         intent = extract_text_features(texts)
-        labels, confidence, margin, probabilities = self.predict_embeddings(
+        labels, _, _, probabilities = self.predict_embeddings(
             np.concatenate([semantic, intent], axis=1).astype("float32")
         )
         recommendation_indices = np.where(self.classes == "recommendation")[0]
         if len(recommendation_indices) == 1:
             recommendation_index = int(recommendation_indices[0])
-            blocked = (labels == "recommendation") & (intent[:, 0] == 0)
-            if np.any(blocked):
-                probabilities = probabilities.copy()
-                probabilities[blocked, recommendation_index] = 0.0
-                probabilities[blocked] /= probabilities[blocked].sum(axis=1, keepdims=True)
-                best_indices = probabilities.argmax(axis=1)
-                labels = self.classes[best_indices]
-                sorted_probabilities = np.sort(probabilities, axis=1)
-                confidence = probabilities[np.arange(len(probabilities)), best_indices]
-                margin = sorted_probabilities[:, -1] - sorted_probabilities[:, -2]
-        return (
-            labels,
-            confidence.astype("float32"),
-            margin.astype("float32"),
-            probabilities.astype("float32"),
-        )
+            for row_index, label in enumerate(labels):
+                has_recommendation_intent = intent[row_index, 0] == 1
+                if label == "recommendation" and not has_recommendation_intent:
+                    # A positive opinion is only a recommendation if it gives advice.
+                    probabilities[row_index, recommendation_index] = 0.0
+                    probabilities[row_index] /= probabilities[row_index].sum()
+        return self._prediction_summary(probabilities)
 
 
 def load_content_classifier(
@@ -182,19 +186,18 @@ def load_content_classifier(
             raise ValueError(
                 f"Classifier artifact is missing: {', '.join(sorted(missing))}"
             )
+        # Older artifacts contain embeddings alone; newer ones add text features.
+        embedding_dimensions = None
+        text_feature_names = ()
+        if "embedding_dimensions" in artifact.files:
+            embedding_dimensions = int(artifact["embedding_dimensions"].item())
+        if "text_feature_names" in artifact.files:
+            text_feature_names = tuple(artifact["text_feature_names"].astype(str))
         return LinearContentClassifier(
             weights=artifact["weights"].astype("float32"),
             bias=artifact["bias"].astype("float32"),
             classes=artifact["classes"].astype(str),
             embedding_model=str(artifact["embedding_model"].item()),
-            embedding_dimensions=(
-                int(artifact["embedding_dimensions"].item())
-                if "embedding_dimensions" in artifact.files
-                else None
-            ),
-            text_feature_names=(
-                tuple(artifact["text_feature_names"].astype(str).tolist())
-                if "text_feature_names" in artifact.files
-                else ()
-            ),
+            embedding_dimensions=embedding_dimensions,
+            text_feature_names=text_feature_names,
         )

@@ -4,6 +4,8 @@ __pycache__/
 .DS_Store
 .env
 .env.*
+!.env.example
+!frontend/.env.example
 .streamlit/secrets.toml
 
 # Generated local recommendation artifacts
@@ -12,6 +14,11 @@ data/post_embeddings.npy
 data/interaction_events.csv
 data/user_book_events.csv
 data/recommendations.csv
+data/interactions.csv
+
+# Cached covers are reproducible; keep only the placeholder in Git.
+frontend/public/book-covers/*
+!frontend/public/book-covers/default.svg
 
 
 # Additional credential and certificate files

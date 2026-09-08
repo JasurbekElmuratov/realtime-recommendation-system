@@ -13,11 +13,36 @@ from cleaning import (
     cloud_qdrant_client,
     enrich_post_books,
     make_payload,
+    main,
     prepare_posts_dataframe,
 )
 
 
 class CleaningTests(unittest.TestCase):
+    def test_skip_qdrant_saves_local_artifacts_without_cloud_credentials(self) -> None:
+        posts = pd.DataFrame({"post_id": [1], "content": ["Example post"]})
+        embeddings = np.array([[1.0, 0.0]], dtype="float32")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (
+                patch("cleaning.DATA_DIR", root),
+                patch("cleaning.PROCESSED_POSTS_FILE", root / "posts.csv"),
+                patch("cleaning.POST_EMBEDDINGS_FILE", root / "embeddings.npy"),
+                patch("cleaning.prepare_posts_dataframe", return_value=posts),
+                patch("cleaning.enrich_post_books", return_value=posts),
+                patch("cleaning.load_embedding_model"),
+                patch("cleaning.create_embeddings", return_value=embeddings),
+                patch("cleaning.classify_posts", return_value=posts),
+                patch("cleaning.cloud_qdrant_client") as cloud_client,
+                patch("cleaning.upload_to_qdrant") as upload,
+            ):
+                main(["--skip-qdrant"])
+
+            cloud_client.assert_not_called()
+            upload.assert_not_called()
+            self.assertEqual(pd.read_csv(root / "posts.csv")["post_id"].tolist(), [1])
+            np.testing.assert_array_equal(np.load(root / "embeddings.npy"), embeddings)
+
     def test_qdrant_payload_contains_synthetic_identity(self) -> None:
         post = SimpleNamespace(
             post_id=1,

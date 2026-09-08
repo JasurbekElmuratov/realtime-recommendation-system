@@ -1,4 +1,8 @@
-"""Interactive English book-profile and recommendation feedback app."""
+"""Alternative Streamlit UI: choose books, view five posts, then rate them.
+
+This older UI calls the Python recommendation functions and Qdrant directly.
+The main Next.js website uses the FastAPI backend instead.
+"""
 
 from __future__ import annotations
 
@@ -162,10 +166,9 @@ def render_header() -> None:
 def render_book_selection() -> None:
     books = load_popular_books()
     ids = books["book_id"].tolist()
-    labels = {
-        row.book_id: f"{row.title} — {row.author}"
-        for row in books.itertuples(index=False)
-    }
+    labels = {}
+    for book in books.itertuples(index=False):
+        labels[book.book_id] = f"{book.title} — {book.author}"
 
     st.subheader("1. Build your reading profile")
     st.caption(
@@ -216,6 +219,7 @@ def render_book_selection() -> None:
             if not client.collection_exists(COLLECTION_NAME):
                 raise RuntimeError("The Qdrant posts collection does not exist")
             with st.spinner("Building your neural interest profile…"):
+                # Turn the six selected books into one interest vector.
                 model = load_model()
                 profile, terms = build_profile_vector(
                     model,
@@ -267,7 +271,10 @@ def retrieve_feedback_vectors(
         with_payload=False,
         with_vectors=True,
     )
-    return {int(point.id): point_vector(point) for point in points}
+    vectors = {}
+    for point in points:
+        vectors[int(point.id)] = point_vector(point)
+    return vectors
 
 
 def render_recommendations() -> None:
@@ -329,6 +336,7 @@ def render_recommendations() -> None:
             client = active_client()
             post_ids = list(feedback)
             with st.spinner("Training your personalized neural preference layer…"):
+                # Pair each rated post vector with 1 (like) or 0 (dislike).
                 vectors_by_id = retrieve_feedback_vectors(client, post_ids)
                 missing = set(post_ids) - set(vectors_by_id)
                 if missing:
@@ -340,6 +348,7 @@ def render_recommendations() -> None:
                     vectors,
                     labels,
                 )
+                # Hide posts from completed rounds when fetching the next feed.
                 seen = set(st.session_state.seen_post_ids) | set(post_ids)
                 new_feed = recommend_for_profile(
                     client,

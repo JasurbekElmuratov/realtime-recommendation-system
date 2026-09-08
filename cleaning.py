@@ -1,5 +1,6 @@
 """Clean, classify, embed, and upload English book posts to Qdrant Cloud."""
 
+import argparse
 import os
 import re
 from pathlib import Path
@@ -20,7 +21,9 @@ POSTS_FILE = DATA_DIR / "posts.csv"
 BOOKS_FILE = DATA_DIR / "books.csv"
 PROCESSED_POSTS_FILE = DATA_DIR / "posts_processed.csv"
 POST_EMBEDDINGS_FILE = DATA_DIR / "post_embeddings.npy"
-MIN_WORDS, MIN_UNIQUE_WORDS, MAX_GENERIC_RATIO = 8, 6, 0.65
+MIN_WORDS = 8
+MIN_UNIQUE_WORDS = 6
+MAX_GENERIC_RATIO = 0.65
 
 GENERIC_WORDS = {"book", "great", "good", "amazing", "interesting", "love", "read"}
 
@@ -30,8 +33,12 @@ def get_words(text: str) -> list[str]:
 
 
 def prepare_posts_dataframe(posts_path: str | Path = POSTS_FILE) -> pd.DataFrame:
+    """Remove off-topic, very short, repetitive, and duplicate posts."""
     posts = pd.read_csv(posts_path)
-    required = {"post_id", "book_id", "content", "view_count", "like_count", "comment_count", "repost_count", "published_at"}
+    required = {
+        "post_id", "book_id", "content", "view_count", "like_count",
+        "comment_count", "repost_count", "published_at",
+    }
     missing = required - set(posts.columns)
     if missing:
         raise ValueError(f"Posts file is missing columns: {', '.join(sorted(missing))}")
@@ -39,17 +46,44 @@ def prepare_posts_dataframe(posts_path: str | Path = POSTS_FILE) -> pd.DataFrame
         related = pd.to_numeric(posts["is_book_related"], errors="coerce").fillna(0)
         posts = posts[related == 1].copy()
     posts["content"] = posts["content"].fillna("").str.strip()
-    tokens = posts["content"].apply(get_words)
-    posts["word_count"] = tokens.apply(len)
-    unique_words = tokens.apply(lambda words: len(set(words)))
-    generic_ratio = tokens.apply(lambda words: sum(word in GENERIC_WORDS for word in words) / max(len(words), 1))
-    posts = posts[(posts["content"] != "") & (posts["word_count"] >= MIN_WORDS) & (unique_words >= MIN_UNIQUE_WORDS) & (generic_ratio < MAX_GENERIC_RATIO)].copy()
+
+    # Count words once, then decide which rows contain enough useful text.
+    word_counts = []
+    keep_rows = []
+    for content in posts["content"]:
+        words = get_words(content)
+        word_count = len(words)
+        word_counts.append(word_count)
+        generic_count = 0
+        for word in words:
+            if word in GENERIC_WORDS:
+                generic_count += 1
+        generic_ratio = generic_count / max(word_count, 1)
+        keep_rows.append(
+            word_count >= MIN_WORDS
+            and len(set(words)) >= MIN_UNIQUE_WORDS
+            and generic_ratio < MAX_GENERIC_RATIO
+        )
+
+    posts["word_count"] = word_counts
+    posts = posts.loc[keep_rows].copy()
+    # Ignore capitalization and repeated spaces when checking duplicate text.
     posts["text_key"] = posts["content"].str.lower().str.split().str.join(" ")
-    return posts.drop_duplicates("post_id").drop_duplicates("text_key").drop(columns=["text_key"]).reset_index(drop=True)
+    posts = posts.drop_duplicates("post_id")
+    posts = posts.drop_duplicates("text_key")
+    return posts.drop(columns="text_key").reset_index(drop=True)
 
 
 def create_embeddings(texts: list[str] | pd.Series, model: SentenceTransformer) -> np.ndarray:
-    return model.encode(texts, batch_size=32, convert_to_numpy=True, normalize_embeddings=True, show_progress_bar=True).astype("float32")
+    """Turn each post into a unit-length vector describing its meaning."""
+    embeddings = model.encode(
+        texts,
+        batch_size=32,
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+        show_progress_bar=True,
+    )
+    return embeddings.astype("float32")
 
 
 def classify_posts(
@@ -60,7 +94,8 @@ def classify_posts(
     """Classify posts as reviews, recommendations, or discussions."""
     if len(posts) != len(embeddings):
         raise ValueError("Every post must have one embedding before classification")
-    classifier = classifier or load_content_classifier()
+    if classifier is None:
+        classifier = load_content_classifier()
     if classifier.embedding_model != MODEL_NAME:
         raise ValueError(
             "Content classifier and cleaning pipeline use different embedding models"
@@ -89,7 +124,22 @@ def enrich_post_books(posts: pd.DataFrame, *, books_path: str | Path = BOOKS_FIL
 
 
 def make_payload(post: object) -> dict[str, object]:
-    return {"post_id": int(post.post_id), "user_id": int(post.user_id), "nickname": str(post.nickname), "book_id": int(post.book_id), "book_title": str(post.book_title), "content": post.content, "content_type": post.content_type, "word_count": int(post.word_count), "view_count": int(post.view_count), "like_count": int(post.like_count), "comment_count": int(post.comment_count), "repost_count": int(post.repost_count), "published_at": post.published_at}
+    """Metadata stored beside a post's vector in Qdrant."""
+    return {
+        "post_id": int(post.post_id),
+        "user_id": int(post.user_id),
+        "nickname": str(post.nickname),
+        "book_id": int(post.book_id),
+        "book_title": str(post.book_title),
+        "content": post.content,
+        "content_type": post.content_type,
+        "word_count": int(post.word_count),
+        "view_count": int(post.view_count),
+        "like_count": int(post.like_count),
+        "comment_count": int(post.comment_count),
+        "repost_count": int(post.repost_count),
+        "published_at": post.published_at,
+    }
 
 
 def cloud_qdrant_client() -> QdrantClient:
@@ -110,26 +160,51 @@ def upload_to_qdrant(
 ) -> None:
     if len(posts) != len(embeddings):
         raise ValueError("Every processed post must have one embedding")
-    client = client or cloud_qdrant_client()
-    client.recreate_collection(collection_name=COLLECTION_NAME, vectors_config=VectorParams(size=embeddings.shape[1], distance=Distance.COSINE))
+    if client is None:
+        client = cloud_qdrant_client()
+    # This offline command replaces the collection with the processed dataset.
+    client.recreate_collection(
+        collection_name=COLLECTION_NAME,
+        vectors_config=VectorParams(
+            size=embeddings.shape[1], distance=Distance.COSINE
+        ),
+    )
     for start in range(0, len(posts), 100):
         batch = posts.iloc[start : start + 100]
-        points = [PointStruct(id=int(post.post_id), vector=embeddings[start + offset].tolist(), payload=make_payload(post)) for offset, post in enumerate(batch.itertuples(index=False))]
+        points = []
+        for offset, post in enumerate(batch.itertuples(index=False)):
+            point = PointStruct(
+                id=int(post.post_id),
+                vector=embeddings[start + offset].tolist(),
+                payload=make_payload(post),
+            )
+            points.append(point)
         client.upsert(collection_name=COLLECTION_NAME, points=points)
 
 
-def main() -> None:
-    client = cloud_qdrant_client()
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--skip-qdrant",
+        action="store_true",
+        help="Save processed posts and embeddings locally without uploading.",
+    )
+    args = parser.parse_args(argv)
+
+    client = None
+    if not args.skip_qdrant:
+        client = cloud_qdrant_client()
     posts = enrich_post_books(prepare_posts_dataframe())
     embeddings = create_embeddings(posts["content"].tolist(), load_embedding_model())
     posts = classify_posts(posts, embeddings)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     posts.to_csv(PROCESSED_POSTS_FILE, index=False)
     np.save(POST_EMBEDDINGS_FILE, embeddings)
-    upload_to_qdrant(posts, embeddings, client)
     print(f"Processed posts: {len(posts)}")
     print(f"Embedding shape: {embeddings.shape}")
-    print(f"Uploaded posts to Qdrant Cloud collection: {COLLECTION_NAME}")
+    if not args.skip_qdrant:
+        upload_to_qdrant(posts, embeddings, client)
+        print(f"Uploaded posts to Qdrant Cloud collection: {COLLECTION_NAME}")
 
 
 if __name__ == "__main__":
